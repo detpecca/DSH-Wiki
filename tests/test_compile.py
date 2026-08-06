@@ -42,29 +42,46 @@ def test_compile_creates_pages_with_backlinks(tmp_path):
 def test_unseen_overwrite_goes_to_error_book(tmp_path):
     llm = FakeLLM([
         "[]",  # SelectPages
-        compile_reply([make_page("people/A", "A")]),
-        "OK", "OK",  # content validation of 2 pages... only 1 written
+        compile_reply([make_page("people/A", "A"), make_page("people/B", "B")]),
+        "OK", "OK",  # content validation of the 2 new pages
     ])
     store, book, compiler = _setup(tmp_path, llm)
-    # pre-existing page that was NOT selected
-    compiler.compile_passage("passage about A", "s-001")
-    # second passage: LLM tries to update people/B which was never selected
+    compiler.compile_passage("passage about A and B", "s-001")
+    assert store.exists("people/B")
+    original_b = store.read("people/B")
+    # second passage: LLM selects only A but also tries to overwrite existing B
     llm.replies = [
         '["people/A"]',  # SelectPages selects only A
         compile_reply([
             make_page("people/A", "A", is_new=False),
-            make_page("people/B", "B", is_new=False),  # unseen overwrite!
+            make_page("people/B", "B HACKED", is_new=False),  # unseen overwrite!
         ], digest_id="s-002"),
         "- id: 1\n  root_cause: over-eager edit\n  constraint_rule: ONLY update selected pages",
-        "OK", "OK", "OK", "OK",
+        "OK",  # content validation for the one written page (A)
     ]
     compiler.compile_passage("another passage", "s-002")
 
-    assert not store.exists("people/B")  # dropped by code autofix
+    assert store.read("people/B") == original_b  # unauthorized update dropped
     open_types = [e["type"] for e in book.open_entries()]
     assert validators.UNSEEN_OVERWRITE in open_types
     # constraint was generated and will be injected next time
     assert any("ONLY update selected pages" in c for c in book.active_constraints())
+
+
+def test_missing_is_new_flag_still_creates_page(tmp_path):
+    """LLM forgets is_new on a brand-new page: disk fact must win (Fable fix)."""
+    import json
+    page = {"path": "concepts/Brand-New", "title": "New", "aliases": [], "tags": [],
+            "summary": "s", "key_facts": ["f"], "related_pages": [],
+            "related_sources": [["sources/digests/s-001", "n"]]}  # no is_new!
+    llm = FakeLLM(["[]", json.dumps(
+        {"digest": {"id": "s-001", "summary": "x"}, "pages": [page]}), "OK"])
+    store, book, compiler = _setup(tmp_path, llm)
+    written = compiler.compile_passage("passage", "s-001")
+
+    assert written == ["concepts/Brand-New"]     # page created, not discarded
+    assert store.exists("concepts/Brand-New")
+    assert book.open_entries() == []             # no bogus unseen_overwrite entry
 
 
 def test_constraint_injected_into_next_compile(tmp_path):

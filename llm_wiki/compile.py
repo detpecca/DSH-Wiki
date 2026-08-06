@@ -260,6 +260,11 @@ class Compiler:
             self.skipped.append((source_id, f"compile_pages failed: {e}"))
             return []
         update = _normalize_update(update)
+        for p in update.get("pages", []):
+            # Derive is_new from the filesystem, never from the LLM's claim:
+            # a forgotten flag would silently discard the page as an
+            # "unseen overwrite" (and log a bogus error entry).
+            p["is_new"] = not self.store.exists(p["path"])
 
         today = self.store.today()
         errors: list[WikiError] = []
@@ -298,8 +303,8 @@ class Compiler:
         """
         written: list[str] = []
         for source_id, passage in passages:
-            self.store.write(f"sources/articles/{source_id}", passage)
             try:
+                self.store.write(f"sources/articles/{source_id}", passage)
                 written += self.compile_passage(passage, source_id)
             except Exception as e:  # noqa: BLE001 — batch isolation is the point
                 self.skipped.append((source_id, f"unexpected: {type(e).__name__}: {e}"))
