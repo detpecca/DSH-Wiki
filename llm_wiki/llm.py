@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import urllib.error
 import urllib.request
 
 DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
@@ -32,8 +34,12 @@ class LLMClient:
         self.model = model or os.environ.get("LLM_WIKI_MODEL") or DEFAULT_MODEL
         self.temperature = temperature
 
-    def chat(self, messages: list[dict], **kwargs) -> str:
-        """Send a chat completion request, return the assistant content."""
+    def chat(self, messages: list[dict], max_retries: int = 3, **kwargs) -> str:
+        """Send a chat completion request, return the assistant content.
+
+        Retries transient failures (network errors, timeouts, HTTP 5xx) with
+        exponential backoff; 4xx errors (auth/quota) fail immediately.
+        """
         if not self.api_key:
             raise RuntimeError(
                 "LLM_WIKI_API_KEY is not set; cannot make LLM calls. "
@@ -54,6 +60,17 @@ class LLMClient:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                return data["choices"][0]["message"]["content"]
+            except urllib.error.HTTPError as e:
+                if 400 <= e.code < 500 or attempt == max_retries:
+                    raise
+                time.sleep(2 ** attempt)
+            except (urllib.error.URLError, TimeoutError):
+                if attempt == max_retries:
+                    raise
+                time.sleep(2 ** attempt)
+        raise RuntimeError("unreachable")

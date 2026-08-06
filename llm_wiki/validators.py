@@ -181,3 +181,46 @@ def llm_content_validate(llm, store: WikiStore, pages: list[str]) -> list[WikiEr
                 fact = line.split(":", 1)[1].strip()
                 errors.append(WikiError(UNSUPPORTED_FACT, rel, fact))
     return errors
+
+
+CONSISTENCY_PROMPT = """Two related Wiki pages describe overlapping entities. Check whether
+they CONTRADICT each other on any shared attribute (dates, names, relations,
+numbers).
+
+PAGE A ({page_a}):
+{text_a}
+
+PAGE B ({page_b}):
+{text_b}
+
+Reply with one line per contradiction, format:
+CONTRADICTION: <attribute>: A says X, B says Y
+If the pages are consistent, reply exactly: OK"""
+
+
+def llm_consistency_check(llm, store: WikiStore, max_pairs: int = 20) -> list[WikiError]:
+    """Cross-page contradiction check (paper Table 6, row 7).
+
+    Sampling-based: pages are paired with their outgoing wikilink targets,
+    pairs are deduplicated and evenly sampled up to ``max_pairs``.
+    """
+    pairs: set[tuple[str, str]] = set()
+    for rel in store.iter_pages():
+        for link in schema.extract_links(store.read(rel)):
+            if link.startswith("sources/") or not store.exists(link):
+                continue
+            pairs.add(tuple(sorted((rel, link))))
+    pairs = sorted(pairs)
+    if len(pairs) > max_pairs:  # even-stride deterministic sampling
+        step = len(pairs) / max_pairs
+        pairs = [pairs[int(i * step)] for i in range(max_pairs)]
+
+    errors: list[WikiError] = []
+    for a, b in pairs:
+        reply = llm.chat([{"role": "user", "content": CONSISTENCY_PROMPT.format(
+            page_a=a, text_a=store.read(a), page_b=b, text_b=store.read(b))}])
+        for line in reply.splitlines():
+            if line.strip().upper().startswith("CONTRADICTION:"):
+                detail = line.split(":", 1)[1].strip()
+                errors.append(WikiError(CROSS_PAGE_CONTRADICTION, a, f"{a} vs {b}: {detail}"))
+    return errors

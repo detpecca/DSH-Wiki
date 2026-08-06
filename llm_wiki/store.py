@@ -142,7 +142,7 @@ class WikiStore:
         return content
 
     def rebuild_global_index(self) -> str:
-        """Regenerate the root index.md directory catalog."""
+        """Regenerate the root index.md directory catalog (single FS scan)."""
         lines = ["# Wiki Directory Overview", "", "## Directory Catalog", ""]
         desc = {
             "concepts": "theories, methods, abstract ideas",
@@ -153,9 +153,12 @@ class WikiStore:
             "topics": "thematic overviews",
             "sources": "paragraph digests and original archives",
         }
-        for cat in self.categories():
-            n = len([p for p in self.iter_pages() if p.startswith(cat + "/")])
-            lines.append(f"- {cat}/ ({n} pages) -- {desc.get(cat, 'knowledge pages')}")
+        counts: dict[str, int] = {}
+        for p in self.iter_pages():
+            cat = p.split("/")[0]
+            counts[cat] = counts.get(cat, 0) + 1
+        for cat in sorted(counts):
+            lines.append(f"- {cat}/ ({counts[cat]} pages) -- {desc.get(cat, 'knowledge pages')}")
         n_src = len(self.iter_digests())
         lines.append(f"- sources/ ({n_src} digests) -- {desc['sources']}")
         content = "\n".join(lines) + "\n"
@@ -164,6 +167,12 @@ class WikiStore:
 
     def rebuild_all_indices(self) -> None:
         for cat in self.categories():
+            self.rebuild_directory_index(cat)
+        self.rebuild_global_index()
+
+    def rebuild_indices_for(self, page_paths: list[str]) -> None:
+        """Incrementally rebuild only the indices affected by the given pages."""
+        for cat in sorted({p.split("/")[0] for p in page_paths if "/" in p}):
             self.rebuild_directory_index(cat)
         self.rebuild_global_index()
 

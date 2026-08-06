@@ -97,6 +97,12 @@ def cmd_errorbook(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to GBK; make Chinese output safe everywhere
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(prog="llm_wiki", description=__doc__)
     ap.add_argument("--wiki", default="./wiki", help="wiki root directory")
     sub = ap.add_subparsers(dest="cmd", required=True)

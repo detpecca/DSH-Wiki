@@ -38,3 +38,16 @@ def test_rebuild_indices(tmp_path):
     idx = store.read("people/_index")
     assert "[[people/A]]" in idx and "[[people/B]]" in idx
     assert "people/ (2 pages)" in store.read("index")
+
+
+def test_rebuild_indices_for_only_touches_affected(tmp_path):
+    store = WikiStore(tmp_path / "wiki")
+    store.write("people/A", _page("people/A"))
+    store.write("systems/B", _page("systems/B"))
+    store.rebuild_all_indices()
+    # 手动污染 systems 索引，然后只对 people 做增量重建
+    store.write("systems/_index", "# corrupted\n")
+    store.rebuild_indices_for(["people/A"])
+    assert "[[people/A]]" in store.read("people/_index")   # people 已重建
+    assert store.read("systems/_index") == "# corrupted\n"  # systems 未被触碰
+    assert "people/" in store.read("index")                # 全局索引已更新

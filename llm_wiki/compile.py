@@ -208,7 +208,7 @@ class Compiler:
                 if self.store.exists(target):
                     self.store.add_backlink(target, p["path"], note="")
 
-        self.store.rebuild_all_indices()
+        self.store.rebuild_indices_for(written)
         return written
 
     # ------------------------------------------------------------ main loop
@@ -283,13 +283,37 @@ class Compiler:
         return repaired
 
     def verify_and_close(self) -> list[dict]:
-        still = validators.structural_validate(self.store)
-        still += validators.llm_content_validate(self.llm, self.store, self.store.iter_pages())
+        """Targeted re-validation (stage 5): re-check only the pages and error
+        types that have open entries, instead of re-validating the whole Wiki."""
+        still: list[WikiError] = []
+        open_entries = self.book.open_entries()
+        types = {e["type"] for e in open_entries}
+
+        structural_pages = sorted(
+            {e["page"] for e in open_entries
+             if e["type"] in validators.STRUCTURAL_TYPES
+             and e["type"] != validators.INDEX_INCONSISTENCY and e["page"]})
+        if structural_pages:
+            still += validators.structural_validate(self.store, structural_pages)
+        if validators.INDEX_INCONSISTENCY in types:
+            still += validators.check_index_consistency(self.store)
+
+        content_pages = sorted(
+            {e["page"] for e in open_entries if e["type"] == validators.UNSUPPORTED_FACT})
+        if content_pages:
+            still += validators.llm_content_validate(self.llm, self.store, content_pages)
+        if validators.CROSS_PAGE_CONTRADICTION in types:
+            still += validators.llm_consistency_check(self.llm, self.store)
         return self.book.verify_and_close(still)
 
     def finalize(self, rounds: int = 3) -> None:
-        """Finalization: 3 rounds of code-fix <-> LLM-fix (paper §3.3)."""
+        """Finalization: 3 rounds of code-fix <-> LLM-fix (paper §3.3),
+        then a sampling-based cross-page consistency sweep."""
         for _ in range(rounds):
             self.code_fix_wiki()
             self.llm_periodic_fix()
+        contradictions = validators.llm_consistency_check(self.llm, self.store)
+        if contradictions:
+            new_entries = self.book.discover(contradictions, self.store.today())
+            self.book.attribute_and_constrain(self.llm, new_entries)
         self.verify_and_close()

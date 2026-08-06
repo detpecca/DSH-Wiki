@@ -68,11 +68,11 @@ python examples/demo_paper.py
 ## 测试
 
 ```bash
-.venv/Scripts/python -m pytest tests/ -q   # 28 个用例，FakeLLM 驱动，无需 API key
+.venv/Scripts/python -m pytest tests/ -q   # 35 个用例，FakeLLM 驱动，无需 API key
 ```
 
 ## 与论文的差异（刻意取舍）
 
 - **wiki_search 无向量嵌入**：以页名/别名/标签/摘要的结构化匹配为主、正文匹配回退（论文本就如此排序优先级）；未接入嵌入模型。
 - **未复现实验**：不含基准评测代码（HotpotQA/MuSiQue/2Wiki/AuthTrace）。
-- **跨页矛盾检测**目前并入 LLM 周期修复的内容验证，未做论文的抽样式独立检查。
+- **Agent 工具协议为 JSON action** 而非原生 function calling：兼容任意 OpenAI 兼容端点（含不支持 tools 参数的本地模型）。
