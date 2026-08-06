@@ -132,7 +132,8 @@ def _normalize_update(update) -> dict:
         if not isinstance(p, dict):
             continue
         path = p.get("path")
-        if not isinstance(path, str) or "/" not in path:
+        if (not isinstance(path, str) or "/" not in path
+                or ".." in path.split("/") or path.startswith("/")):
             continue
         p["related_pages"] = [
             (str(x[0]), str(x[1]) if len(x) > 1 else "")

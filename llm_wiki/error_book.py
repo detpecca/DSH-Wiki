@@ -45,8 +45,12 @@ class ErrorBook:
     # ------------------------------------------------------------- persistence
     def load(self) -> None:
         if self.path.is_file():
-            data = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
-            self.entries = data.get("entries", [])
+            try:
+                data = yaml.safe_load(self.path.read_text(encoding="utf-8"))
+            except yaml.YAMLError:
+                data = None
+            if isinstance(data, dict):
+                self.entries = [e for e in data.get("entries", []) if isinstance(e, dict)]
             max_id = max((e.get("id", 0) for e in self.entries), default=0)
             self._ids = itertools.count(max_id + 1)
 
@@ -120,7 +124,7 @@ class ErrorBook:
     def active_constraints(self) -> list[str]:
         """ActiveConstraints(B): all open constraint rules, for prompt injection."""
         return [e["constraint_rule"] for e in self.entries
-                if e["status"] == "open" and e.get("constraint_rule")]
+                if e.get("status") == "open" and e.get("constraint_rule")]
 
     # -------------------------------------------------------- Verify & Close (5)
     def verify_and_close(self, still_failing: list[WikiError]) -> list[dict]:
@@ -139,4 +143,4 @@ class ErrorBook:
         return closed
 
     def open_entries(self) -> list[dict]:
-        return [e for e in self.entries if e["status"] == "open"]
+        return [e for e in self.entries if e.get("status") == "open"]

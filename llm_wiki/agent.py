@@ -16,7 +16,6 @@ Strategies (paper Appendix H), chosen adaptively by the agent:
 from __future__ import annotations
 
 import json
-import re
 
 from . import search
 from .store import WikiStore
@@ -54,14 +53,23 @@ RULES:
 
 
 def _parse_action(text: str) -> dict | None:
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
+    """Extract the first balanced {...} block and parse it as an action."""
+    start = text.find("{")
+    if start == -1:
         return None
-    try:
-        action = json.loads(m.group(0))
-        return action if "tool" in action else None
-    except json.JSONDecodeError:
-        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    action = json.loads(text[start:i + 1])
+                    return action if isinstance(action, dict) and "tool" in action else None
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 
 def run_agent(store: WikiStore, llm, question: str,

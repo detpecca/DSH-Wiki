@@ -30,6 +30,11 @@ class WikiStore:
 
     # ------------------------------------------------------------------ paths
     def page_file(self, rel: str) -> Path:
+        """Map a logical wiki path to a filesystem path (traversal-safe)."""
+        p = Path(rel)
+        if (p.is_absolute() or ".." in p.parts or "\\" in rel
+                or rel.startswith("/") or ":" in rel):
+            raise ValueError(f"unsafe wiki path: {rel!r}")
         return self.root / (rel + ".md")
 
     def exists(self, rel: str) -> bool:
@@ -43,11 +48,14 @@ class WikiStore:
         return self.page_file(rel).read_text(encoding="utf-8")
 
     def read_many(self, rels: list[str]) -> dict[str, str]:
-        """Batch read (wiki_read primitive); missing paths get an error note."""
+        """Batch read (wiki_read primitive); bad/missing paths get an error note."""
         out = {}
         for rel in rels:
             rel = rel.removesuffix(".md")
-            out[rel] = self.read(rel) if self.exists(rel) else "(page not found)"
+            try:
+                out[rel] = self.read(rel) if self.exists(rel) else "(page not found)"
+            except (ValueError, OSError):
+                out[rel] = "(invalid or unreadable path)"
         return out
 
     def iter_pages(self) -> list[str]:
