@@ -138,6 +138,9 @@ class ScriptedLLM:
             raise AssertionError("unknown passage in compile prompt")
         if "verifying a Wiki page" in prompt:
             return "OK"  # facts are grounded (they are, we wrote them from the paper)
+        if "systematic errors" in prompt:  # Error Book attribution
+            return ("- id: 1\n  root_cause: linked to pages not yet created\n"
+                    "  constraint_rule: ONLY link to pages in the indices or created in the same output")
         if self.agent_actions:
             return self.agent_actions.pop(0)
         return "OK"

@@ -114,6 +114,29 @@ def check_unseen_overwrite(updated_paths: set[str], selected: set[str], new_page
     return errors
 
 
+def check_update(update: dict, store: WikiStore) -> list[WikiError]:
+    """Structural checks on a proposed (not yet applied) update U.
+
+    Validates every link inside U against the known universe: pages already
+    on disk plus pages created by this same update. Source refs are checked
+    for format only — their digests are created by this update's apply step,
+    so existence cannot be checked yet.
+    """
+    errors: list[WikiError] = []
+    new_paths = {p["path"] for p in update.get("pages", []) if p.get("is_new")}
+    known = new_paths | set(store.iter_pages())
+    for p in update.get("pages", []):
+        for target, _note in p.get("related_pages", []):
+            if target not in known:
+                errors.append(WikiError(DANGLING_LINK, p["path"],
+                                        f"link to missing page [[{target}]]"))
+        for target, _note in p.get("related_sources", []):
+            if not schema.SOURCE_REF_RE.match(f"[[{target}]]"):
+                errors.append(WikiError(MALFORMED_REF, p["path"],
+                                        f"bad source ref: [[{target}]]"))
+    return errors
+
+
 def structural_validate(store: WikiStore, pages: list[str] | None = None) -> list[WikiError]:
     """StructuralValidate(U, W) in Algorithm 1: all deterministic checks."""
     errors: list[WikiError] = []

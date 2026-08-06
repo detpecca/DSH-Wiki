@@ -84,3 +84,29 @@ def test_constraint_injected_into_next_compile(tmp_path):
     compiler.compile_passage("p2", "s-002")
     compile_prompt = llm.seen[-2]  # the CompileWikiPages prompt
     assert "NEVER create dangling links" in compile_prompt
+
+
+def test_dangling_link_in_update_autofixed_without_overwrite(tmp_path):
+    """A dangling link in U (no unseen overwrite) must still be caught and
+    dropped before hitting disk — P0 fix: autofix runs unconditionally."""
+    llm = FakeLLM([
+        "[]",  # SelectPages
+        compile_reply([make_page(
+            "people/A", "A",
+            related_pages=[["people/Ghost", "phantom link"]],  # dangling!
+            related_sources=[["sources/digests/s-001", "ok"], ["bad/ref", "malformed"]],
+        )]),
+        "- id: 1\n  root_cause: hallucinated link\n  constraint_rule: NEVER link to non-existent pages\n"
+        "- id: 2\n  root_cause: bad ref\n  constraint_rule: ONLY cite sources/digests",
+        "OK",  # ContentValidate
+    ])
+    store, book, compiler = _setup(tmp_path, llm)
+    compiler.compile_passage("passage", "s-001")
+
+    text = store.read("people/A")
+    assert "people/Ghost" not in text          # dangling link dropped pre-apply
+    assert "bad/ref" not in text               # malformed ref dropped pre-apply
+    assert validators.structural_validate(store) == []
+    types = {e["type"] for e in book.open_entries()}
+    assert validators.DANGLING_LINK in types
+    assert validators.MALFORMED_REF in types

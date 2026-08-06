@@ -37,9 +37,9 @@
 论文附录 F 的 7 类错误在这里变成 5 个确定性检查函数 + 1 个 LLM 验证：
 
 - `check_dangling_links`（`:45`）、`check_incomplete_pages`（`:56`）、`check_malformed_refs`（`:69`）、`check_index_consistency`（`:90`）都是纯代码，逻辑直白，扫一眼即可；
-- `check_unseen_overwrite`（`:109`）注意签名不同：它比较的是**集合**（更新的页面 ⊆ 选中的页面 ∪ 新建页面），是编译期的即时检查；
-- `structural_validate()`（`:117`）是上面这些的聚合入口，对应算法 1 第 4 行；
-- `llm_content_validate()`（`:143`）是 LLM 内容验证，注意它的 prompt（`FACT_CHECK_PROMPT`，`:129`）：逐条核对 Key Facts 是否有 digest 支撑。
+- `check_unseen_overwrite`（`:109`）注意签名不同：它比较的是**集合**（更新的页面 ⊆ 选中的页面 ∪ 新建页面），是编译期的即时检查；`check_update`（`:117`）与之配套，在更新落盘前检查 U 内部的悬空链接和坏引用；
+- `structural_validate()`（`:140`）是上面这些的聚合入口，对应算法 1 第 4 行；
+- `llm_content_validate()`（`:166`）是 LLM 内容验证，注意它的 prompt（`FACT_CHECK_PROMPT`，`:152`）：逐条核对 Key Facts 是否有 digest 支撑。
 
 ### 第 4 站：`llm_wiki/error_book.py`（~145 行）—— 五阶段状态机
 
@@ -179,7 +179,7 @@ error_book.yaml             # ErrorBook 持久化
 | 改页面格式 | `schema.py` 的 `REQUIRED_SECTIONS` + `render_page`，校验器会跟随 |
 | 接入 Obsidian | 无需改代码——wiki/ 目录直接作为 Obsidian vault 打开 |
 
-## 六、测试地图（22 例）
+## 六、测试地图（28 例）
 
 | 文件 | 覆盖 |
 |---|---|
@@ -187,5 +187,6 @@ error_book.yaml             # ErrorBook 持久化
 | `test_store.py` | 读写、双向链接幂等、索引重建 |
 | `test_validators.py` | 5 类结构错误各一例 + 干净 Wiki 零误报 |
 | `test_error_book.py` | 错误合并、归因→注入→关闭全循环、持久化重载 |
-| `test_compile.py` | 算法 1 全流程、Unseen Overwrite 入册、约束注入到下一轮 prompt |
+| `test_compile.py` | 算法 1 全流程、Unseen Overwrite 入册、约束注入到下一轮 prompt、悬空链接/坏引用落盘前拦截 |
+| `test_search.py` | 英文分词、CJK bigram 分词、中文查询命中别名/摘要、结构化信号优先 |
 | `test_agent.py` | 桥接比较的多跳遍历、未读不许答、耐心/预算两种终止 |

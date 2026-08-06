@@ -15,7 +15,19 @@ WEIGHTS = {"name": 8, "alias": 6, "tag": 4, "summary": 2, "content": 1}
 
 
 def _tokens(query: str) -> list[str]:
-    return [t.lower() for t in re.findall(r"[A-Za-z0-9]+", query) if len(t) > 1]
+    """Tokenize a query: alphanumeric words plus CJK bigrams.
+
+    Chinese text has no whitespace separators, so CJK runs are broken into
+    overlapping bigrams (e.g. "导演年龄" -> ["导演", "演年", "年龄"]);
+    1-2 char runs are kept whole.
+    """
+    tokens = [t.lower() for t in re.findall(r"[A-Za-z0-9]+", query) if len(t) > 1]
+    for run in re.findall("[一-鿿]+", query):
+        if len(run) <= 2:
+            tokens.append(run)
+        else:
+            tokens.extend(run[i:i + 2] for i in range(len(run) - 1))
+    return tokens
 
 
 def search(store: WikiStore, query: str, limit: int = 10) -> list[dict]:

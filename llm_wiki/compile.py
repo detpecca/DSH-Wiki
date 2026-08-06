@@ -224,11 +224,12 @@ class Compiler:
             set(selected),
             {p["path"] for p in update.get("pages", []) if p.get("is_new")},
         )
+        errors += validators.check_update(update, self.store)       # 4: Es (in-update links/refs)
 
-        if errors:                                                  # 7-10
+        if errors:                                                  # 8-9: B, C
             new_entries = self.book.discover(errors, today)
             self.book.attribute_and_constrain(self.llm, new_entries)
-            update = self.code_autofix(update, errors)
+        update = self.code_autofix(update, errors)                  # 10: always sanitize U
 
         written = self.apply_updates(update, source_id, passage)    # 12: W
 
