@@ -179,7 +179,7 @@ error_book.yaml             # ErrorBook 持久化
 | 改页面格式 | `schema.py` 的 `REQUIRED_SECTIONS` + `render_page`，校验器会跟随 |
 | 接入 Obsidian | 无需改代码——wiki/ 目录直接作为 Obsidian vault 打开 |
 
-## 六、测试地图（35 例）
+## 六、测试地图（40 例）
 
 | 文件 | 覆盖 |
 |---|---|
@@ -191,4 +191,5 @@ error_book.yaml             # ErrorBook 持久化
 | `test_compile.py` | 算法 1 全流程、Unseen Overwrite 入册、约束注入到下一轮 prompt、悬空链接/坏引用落盘前拦截 |
 | `test_search.py` | 英文分词、CJK bigram 分词、中文查询命中别名/摘要、结构化信号优先 |
 | `test_llm.py` | 瞬时错误重试成功、重试上限、4xx 不重试 |
+| `test_robustness.py` | 坏 LLM 输出（数组/缺 path/无 JSON）不崩、批次隔离、更新归一化 |
 | `test_agent.py` | 桥接比较的多跳遍历、未读不许答、耐心/预算两种终止 |

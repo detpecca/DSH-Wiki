@@ -49,6 +49,10 @@ def cmd_ingest(args) -> int:
     compiler.finalize()
     print(f"done: {len(written)} page updates written; wiki has "
           f"{len(store.iter_pages())} pages, {len(book.open_entries())} open error entries")
+    if compiler.skipped:
+        print(f"WARNING: {len(compiler.skipped)} passage(s) skipped due to failures:")
+        for sid, reason in compiler.skipped:
+            print(f"  - {sid}: {reason}")
     return 0
 
 

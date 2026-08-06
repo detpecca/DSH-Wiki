@@ -116,6 +116,42 @@ def _extract_json(text: str):
     raise ValueError(f"no JSON found in LLM reply: {text[:200]}")
 
 
+def _normalize_update(update) -> dict:
+    """Coerce a raw LLM update into the expected shape; drop unusable entries.
+
+    LLM replies are untrusted: the top level may be a list, pages may lack a
+    ``path``, link entries may be malformed. Everything unusable is dropped
+    here so downstream code can assume well-formed input.
+    """
+    if not isinstance(update, dict):
+        return {"digest": {}, "pages": []}
+    if not isinstance(update.get("digest"), dict):
+        update["digest"] = {}
+    pages = []
+    for p in update.get("pages") or []:
+        if not isinstance(p, dict):
+            continue
+        path = p.get("path")
+        if not isinstance(path, str) or "/" not in path:
+            continue
+        p["related_pages"] = [
+            (str(x[0]), str(x[1]) if len(x) > 1 else "")
+            for x in (p.get("related_pages") or [])
+            if isinstance(x, (list, tuple)) and len(x) >= 1 and isinstance(x[0], str)
+        ]
+        p["related_sources"] = [
+            (str(x[0]), str(x[1]) if len(x) > 1 else "")
+            for x in (p.get("related_sources") or [])
+            if isinstance(x, (list, tuple)) and len(x) >= 1 and isinstance(x[0], str)
+        ]
+        for key, default in (("aliases", []), ("tags", []), ("key_facts", [])):
+            if not isinstance(p.get(key), list):
+                p[key] = default
+        pages.append(p)
+    update["pages"] = pages
+    return update
+
+
 class Compiler:
     def __init__(self, store: WikiStore, llm, book: ErrorBook,
                  k: int = 5, periodic_every: int = 10):
@@ -125,6 +161,7 @@ class Compiler:
         self.k = k                      # SelectPages budget (paper §4.4)
         self.periodic_every = periodic_every
         self.articles_since_fix = 0
+        self.skipped: list[tuple[str, str]] = []  # (source_id, reason) failures
 
     # ------------------------------------------------------- SelectPages (2)
     def select_pages(self, passage: str) -> list[str]:
@@ -215,7 +252,13 @@ class Compiler:
     def compile_passage(self, passage: str, source_id: str) -> list[str]:
         """One iteration of the Algorithm-1 for-loop."""
         selected = self.select_pages(passage)                       # 2: S
-        update = self.compile_pages(passage, source_id, selected)   # 3: U
+        try:
+            update = self.compile_pages(passage, source_id, selected)  # 3: U
+        except (ValueError, TypeError, KeyError) as e:
+            # malformed LLM reply: skip this passage instead of crashing the batch
+            self.skipped.append((source_id, f"compile_pages failed: {e}"))
+            return []
+        update = _normalize_update(update)
 
         today = self.store.today()
         errors: list[WikiError] = []
@@ -247,11 +290,18 @@ class Compiler:
         return written
 
     def compile_batch(self, passages: list[tuple[str, str]]) -> list[str]:
-        """X: list of (source_id, passage). Archives each source article."""
+        """X: list of (source_id, passage). Archives each source article.
+
+        A failing passage never aborts the batch: it is recorded in
+        ``self.skipped`` and the loop continues with the next passage.
+        """
         written: list[str] = []
         for source_id, passage in passages:
             self.store.write(f"sources/articles/{source_id}", passage)
-            written += self.compile_passage(passage, source_id)
+            try:
+                written += self.compile_passage(passage, source_id)
+            except Exception as e:  # noqa: BLE001 — batch isolation is the point
+                self.skipped.append((source_id, f"unexpected: {type(e).__name__}: {e}"))
         return written
 
     # ------------------------------------------------------------- repairs
