@@ -163,8 +163,22 @@ UNSUPPORTED: <fact>
 If every fact is supported, reply exactly: OK"""
 
 
+def _key_facts(text: str) -> list[str]:
+    """Bullets under '## Key Facts', excluding the '(none)' placeholder."""
+    m = re.search(r"^## Key Facts\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    if not m:
+        return []
+    return [line.strip()[2:].strip() for line in m.group(1).splitlines()
+            if line.strip().startswith("-") and "(none)" not in line]
+
+
 def llm_content_validate(llm, store: WikiStore, pages: list[str]) -> list[WikiError]:
-    """ContentValidate(U, W, A): source-grounded LLM verification."""
+    """ContentValidate(U, W, A): source-grounded LLM verification.
+
+    A page with facts but no existing digest is reported WITHOUT an LLM
+    call: its facts are unverifiable, and silently skipping it would let a
+    repair that stripped citations make an unsupported fact invisible.
+    """
     errors: list[WikiError] = []
     for rel in pages:
         text = store.read(rel)
@@ -173,6 +187,9 @@ def llm_content_validate(llm, store: WikiStore, pages: list[str]) -> list[WikiEr
             if store.exists(target):
                 digests.append(f"--- {target} ---\n{store.read(target)}")
         if not digests:
+            if _key_facts(text):
+                errors.append(WikiError(UNSUPPORTED_FACT, rel,
+                                        "no cited digests; facts are unverifiable"))
             continue
         reply = llm.chat([{"role": "user", "content": FACT_CHECK_PROMPT.format(
             page=rel, page_text=text, digests="\n\n".join(digests))}])

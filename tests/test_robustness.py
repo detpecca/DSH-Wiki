@@ -16,7 +16,8 @@ def _setup(tmp_path, llm):
 def test_array_instead_of_object_is_skipped(tmp_path):
     _store, _book, c = _setup(tmp_path, FakeLLM(['[]', '[{"pages": []}]']))
     assert c.compile_passage("p", "s-001") == []  # no crash
-    assert not c.skipped  # array normalizes to empty update, not a crash
+    # expect=dict: a bare array is not a valid compile reply -> recorded skip
+    assert len(c.skipped) == 1 and c.skipped[0][0] == "s-001"
 
 
 def test_page_missing_path_is_dropped(tmp_path):

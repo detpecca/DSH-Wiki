@@ -179,7 +179,7 @@ error_book.yaml             # ErrorBook 持久化
 | 改页面格式 | `schema.py` 的 `REQUIRED_SECTIONS` + `render_page`，校验器会跟随 |
 | 接入 Obsidian | 无需改代码——wiki/ 目录直接作为 Obsidian vault 打开 |
 
-## 六、测试地图（46 例）
+## 六、测试地图（55 例）
 
 | 文件 | 覆盖 |
 |---|---|

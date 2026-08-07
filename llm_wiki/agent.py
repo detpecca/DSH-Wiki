@@ -53,22 +53,38 @@ RULES:
 
 
 def _parse_action(text: str) -> dict | None:
-    """Extract the first balanced {...} block and parse it as an action."""
+    """Extract the first balanced {...} block (string-aware) as an action.
+
+    Braces inside JSON strings (e.g. an answer containing '}') must not
+    affect depth counting, so the scan tracks string/escape state.
+    """
     start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    action = json.loads(text[start:i + 1])
-                    return action if isinstance(action, dict) and "tool" in action else None
-                except json.JSONDecodeError:
-                    return None
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        action = json.loads(text[start:i + 1])
+                        if isinstance(action, dict) and "tool" in action:
+                            return action
+                    except json.JSONDecodeError:
+                        pass
+                    break
+        start = text.find("{", start + 1)
     return None
 
 

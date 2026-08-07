@@ -101,18 +101,52 @@ else in the same format. Output the full corrected page text only."""
 
 
 # ------------------------------------------------------------- JSON parsing
-def _extract_json(text: str):
-    """Tolerant JSON extraction from an LLM reply."""
+def _json_spans(text: str) -> list[str]:
+    """All balanced top-level {...} / [...] spans (string-aware)."""
+    spans = []
+    i = 0
+    while i < len(text):
+        if text[i] in "[{":
+            depth, in_str, esc = 0, False, False
+            for j in range(i, len(text)):
+                ch = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                elif ch == '"':
+                    in_str = True
+                elif ch in "[{":
+                    depth += 1
+                elif ch in "]}":
+                    depth -= 1
+                    if depth == 0:
+                        spans.append(text[i:j + 1])
+                        i = j
+                        break
+        i += 1
+    return spans
+
+
+def _extract_json(text: str, expect: type | None = None):
+    """Tolerant JSON extraction from an LLM reply.
+
+    Scans balanced JSON spans in order and returns the first that parses and
+    matches ``expect`` (dict/list), so chatter before the real payload — or a
+    stray object before the real array — cannot hijack the result.
+    """
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
-    for i, ch in enumerate(text):
-        if ch in "[{":
-            for j in range(len(text), i, -1):
-                try:
-                    return json.loads(text[i:j])
-                except json.JSONDecodeError:
-                    continue
-            break
+    for span in _json_spans(text):
+        try:
+            obj = json.loads(span)
+        except json.JSONDecodeError:
+            continue
+        if expect is None or isinstance(obj, expect):
+            return obj
     raise ValueError(f"no JSON found in LLM reply: {text[:200]}")
 
 
@@ -133,7 +167,8 @@ def _normalize_update(update) -> dict:
             continue
         path = p.get("path")
         if (not isinstance(path, str) or "/" not in path
-                or ".." in path.split("/") or path.startswith("/")):
+                or ".." in path.split("/") or path.startswith("/")
+                or ":" in path or "\\" in path):  # mirror store.page_file safety rules
             continue
         p["related_pages"] = [
             (str(x[0]), str(x[1]) if len(x) > 1 else "")
@@ -163,13 +198,15 @@ class Compiler:
         self.periodic_every = periodic_every
         self.articles_since_fix = 0
         self.skipped: list[tuple[str, str]] = []  # (source_id, reason) failures
+        self._dirty: set[str] = set()      # pages written since last periodic fix
+        self._repaired: list[str] = []     # pages rewritten by the last LLM fix
 
     # ------------------------------------------------------- SelectPages (2)
     def select_pages(self, passage: str) -> list[str]:
         reply = self.llm.chat([{"role": "user", "content": SELECT_PAGES_PROMPT.format(
             indices=self.store.directory_index_listing(), passage=passage, k=self.k)}])
         try:
-            pages = _extract_json(reply)
+            pages = _extract_json(reply, expect=list)
         except ValueError:
             return []
         return [p for p in pages if isinstance(p, str) and self.store.exists(p)][: self.k]
@@ -185,7 +222,7 @@ class Compiler:
         reply = self.llm.chat([{"role": "user", "content": COMPILE_PAGES_PROMPT.format(
             passage=passage, source_id=source_id, selected=selected_text,
             constraints_block=constraints_block)}])
-        return _extract_json(reply)
+        return _extract_json(reply, expect=dict)
 
     # --------------------------------------------------------- CodeAutoFix (10)
     def code_autofix(self, update: dict, errors: list[WikiError]) -> dict:
@@ -209,19 +246,44 @@ class Compiler:
         return update
 
     # --------------------------------------------------------- ApplyUpdates (12)
-    def apply_updates(self, update: dict, source_id: str, passage: str) -> list[str]:
+    def apply_updates(self, update: dict, source_id: str, passage: str) -> tuple[list[str], list[WikiError]]:
+        """Write the update to disk. Returns (written pages, dropped links).
+
+        Existence filtering happens HERE, not only pre-apply: the digest is
+        written first, so at page-write time every legitimate reference can be
+        verified. Links/refs pointing nowhere are dropped and reported.
+        """
         today = self.store.today()
-        written = []
+        written: list[str] = []
+        dropped: list[WikiError] = []
 
         digest = update.get("digest") or {}
         digest_text = (
-            f"# Digest: {digest.get('id', source_id)}\n\n"
+            f"# Digest: {source_id}\n\n"  # never trust the LLM-returned digest id
             f"{digest.get('summary', '')}\n\n## Original\n\n{passage}\n"
         )
         self.store.write(f"sources/digests/{source_id}", digest_text)
 
+        # pages on disk now ∪ pages in this update (same-batch links are legal)
+        known_pages = {p["path"] for p in update.get("pages", [])} | set(self.store.iter_pages())
+
         for p in update.get("pages", []):
             path = p["path"]
+            related_pages = []
+            for target, note in p.get("related_pages", []):
+                if target in known_pages:
+                    related_pages.append((target, note))
+                else:
+                    dropped.append(WikiError(validators.DANGLING_LINK, path,
+                                             f"dropped link to missing page [[{target}]]"))
+            related_sources = []
+            for target, note in p.get("related_sources", []):
+                if self.store.exists(target):
+                    related_sources.append((target, note))
+                else:
+                    dropped.append(WikiError(validators.DANGLING_LINK, path,
+                                             f"dropped reference to missing digest [[{target}]]"))
+
             existing_created = ""
             if self.store.exists(path):
                 existing_created = schema.parse_frontmatter(self.store.read(path)).get("created", "")
@@ -233,8 +295,8 @@ class Compiler:
                 tags=p.get("tags", []),
                 summary=p.get("summary", ""),
                 key_facts=p.get("key_facts", []),
-                related_pages=[tuple(x) for x in p.get("related_pages", [])],
-                related_sources=[tuple(x) for x in p.get("related_sources", [])],
+                related_pages=related_pages,
+                related_sources=related_sources,
                 created=existing_created or today,
                 updated=today,
             )
@@ -244,10 +306,11 @@ class Compiler:
         for p in update.get("pages", []):  # bidirectional links
             for target, note in p.get("related_pages", []):
                 if self.store.exists(target):
+                    # note describes target->source direction; wrong on a backlink
                     self.store.add_backlink(target, p["path"], note="")
 
         self.store.rebuild_indices_for(written)
-        return written
+        return written, dropped
 
     # ------------------------------------------------------------ main loop
     def compile_passage(self, passage: str, source_id: str) -> list[str]:
@@ -280,7 +343,11 @@ class Compiler:
             self.book.attribute_and_constrain(self.llm, new_entries)
         update = self.code_autofix(update, errors)                  # 10: always sanitize U
 
-        written = self.apply_updates(update, source_id, passage)    # 12: W
+        written, dropped = self.apply_updates(update, source_id, passage)  # 12: W
+        self._dirty.update(written)
+        if dropped:                                                 # links lost at apply time
+            new_entries = self.book.discover(dropped, today)
+            self.book.attribute_and_constrain(self.llm, new_entries)
 
         # content validation happens after application (needs digests on disk)
         content_errors = validators.llm_content_validate(self.llm, self.store, written)
@@ -321,9 +388,23 @@ class Compiler:
         return fixes
 
     def llm_periodic_fix(self, pages: list[str] | None = None) -> list[str]:
-        """Layer-2 LLM Periodic Fix: repair content-level errors (semantic)."""
+        """Layer-2 LLM Periodic Fix: repair content-level errors (semantic).
+
+        Default targets are only pages that need it — open UNSUPPORTED_FACT
+        entries plus pages written since the last fix — not the whole Wiki.
+        A repair is accepted only if the page still cites at least one
+        existing digest; a "repair" that strips citations would make the
+        unsupported fact invisible to validation instead of fixing it.
+        """
+        if pages is None:
+            open_pages = {e["page"] for e in self.book.open_entries()
+                          if e["type"] == validators.UNSUPPORTED_FACT}
+            targets = sorted(open_pages | self._dirty)
+        else:
+            targets = pages
+        if not targets:
+            return []
         repaired = []
-        targets = pages if pages is not None else self.store.iter_pages()
         errors = validators.llm_content_validate(self.llm, self.store, targets)
         for err in errors:
             text = self.store.read(err.page)
@@ -332,34 +413,47 @@ class Compiler:
                 if self.store.exists(t))
             fixed = self.llm.chat([{"role": "user", "content": REPAIR_PAGE_PROMPT.format(
                 page_text=text, digests=digests, facts=err.detail)}])
-            if fixed.strip().startswith("---"):
-                self.store.write(err.page, fixed.strip() + "\n")
-                repaired.append(err.page)
-        self.store.rebuild_all_indices()
+            if not fixed.strip().startswith("---"):
+                continue
+            kept_refs = [t for t, _ in schema.parse_section_links(fixed, "Related Sources")
+                         if self.store.exists(t)]
+            if not kept_refs:
+                continue  # repair stripped all citations: reject, error stays open
+            self.store.write(err.page, fixed.strip() + "\n")
+            repaired.append(err.page)
+        if repaired:
+            self.store.rebuild_indices_for(repaired)
+        self._repaired.extend(repaired)
+        self._dirty.difference_update(targets)
         return repaired
 
     def verify_and_close(self) -> list[dict]:
-        """Targeted re-validation (stage 5): re-check only the pages and error
-        types that have open entries, instead of re-validating the whole Wiki."""
+        """Targeted re-validation (stage 5): re-check pages with open entries
+        AND pages touched by the last repair round (repairs can introduce
+        brand-new error types that open entries don't cover)."""
         still: list[WikiError] = []
         open_entries = self.book.open_entries()
         types = {e["type"] for e in open_entries}
+        repaired = set(self._repaired)
 
         structural_pages = sorted(
             {e["page"] for e in open_entries
              if e["type"] in validators.STRUCTURAL_TYPES
-             and e["type"] != validators.INDEX_INCONSISTENCY and e["page"]})
+             and e["type"] != validators.INDEX_INCONSISTENCY and e["page"]}
+            | repaired)
         if structural_pages:
             still += validators.structural_validate(self.store, structural_pages)
         if validators.INDEX_INCONSISTENCY in types:
             still += validators.check_index_consistency(self.store)
 
         content_pages = sorted(
-            {e["page"] for e in open_entries if e["type"] == validators.UNSUPPORTED_FACT})
+            {e["page"] for e in open_entries if e["type"] == validators.UNSUPPORTED_FACT}
+            | repaired)
         if content_pages:
             still += validators.llm_content_validate(self.llm, self.store, content_pages)
         if validators.CROSS_PAGE_CONTRADICTION in types:
             still += validators.llm_consistency_check(self.llm, self.store)
+        self._repaired = []
         return self.book.verify_and_close(still)
 
     def finalize(self, rounds: int = 3) -> None:
