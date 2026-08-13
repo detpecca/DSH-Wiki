@@ -33,15 +33,24 @@ python -m llm_wiki ingest my_notes.txt --wiki ./wiki
 # 提问（Agent 遍历：搜索→阅读→跟链接→充分性检查→作答）
 python -m llm_wiki query "哪部电影的导演更年长？" --wiki ./wiki
 
-# 结构校验（5 类确定性错误检测）
-python -m llm_wiki validate --wiki ./wiki
+# 检索原语（结构化信号打分；--json 供程序调用，DSH 插件即走此通道）
+python -m llm_wiki --wiki ./wiki search "导演" --json
+python -m llm_wiki --wiki ./wiki read concepts/X entities/Y --json
+python -m llm_wiki --wiki ./wiki stats --json
+
+# 结构校验（5 类确定性错误检测；--json 输出结构化错误列表）
+python -m llm_wiki --wiki ./wiki validate [--json]
 
 # 代码自动修复；--finalize 追加 3 轮 代码↔LLM 修复（论文 §3.3 定稿阶段）
 python -m llm_wiki fix --finalize --wiki ./wiki
 
-# 查看错误记录本
-python -m llm_wiki errorbook --wiki ./wiki
+# 查看错误记录本（--json 输出全部条目）
+python -m llm_wiki --wiki ./wiki errorbook [--json]
 ```
+
+> 注：`--wiki` 是顶层选项，须放在子命令**之前**（argparse 规则）。
+> `search` / `read` / `stats` / `validate` / `errorbook` / `ingest` 均支持
+> `--json` 输出单一 JSON 文档，供程序（如 DSH 插件适配器）消费。
 
 无 API key 时可跑脚本化端到端演示（编译本论文自身 + 多跳查询）：
 

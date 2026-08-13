@@ -7,6 +7,12 @@ build/
 dist/
 .pytest_cache/
 
+# 开发期 scratch（本地校验脚本与样例 wiki，不入库）
+scratch/
+scratch-wiki/
+.pytest-tmp/
+pytest-cache-files-*/
+
 # 运行时产物（知识库实例，不入库）
 wiki/
 error_book.yaml

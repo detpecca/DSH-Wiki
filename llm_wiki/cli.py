@@ -1,16 +1,25 @@
-"""Command-line interface: ingest / query / validate / fix / lint / errorbook.
+"""Command-line interface: ingest / query / search / read / stats /
+validate / fix / errorbook.
 
 Examples:
     python -m llm_wiki ingest notes.txt --wiki ./wiki
     python -m llm_wiki query "Which film has the older director?" --wiki ./wiki
+    python -m llm_wiki search "director" --wiki ./wiki --json
+    python -m llm_wiki read entities/X concepts/Y --wiki ./wiki --json
+    python -m llm_wiki stats --wiki ./wiki --json
     python -m llm_wiki validate --wiki ./wiki
     python -m llm_wiki fix --wiki ./wiki            # code autofix + finalize
     python -m llm_wiki errorbook --wiki ./wiki
+
+Every read-only subcommand (search / read / stats / validate / errorbook)
+plus ingest accepts ``--json`` for machine-consumable output; the DSH plugin
+adapter drives the wiki through these JSON lines.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -44,15 +53,27 @@ def cmd_ingest(args) -> int:
     passages = _split_passages(text)
     stem = slugify(Path(args.file).stem) or "source"
     batch = [(f"{stem}-{i:03d}", p) for i, p in enumerate(passages, 1)]
-    print(f"ingesting {len(batch)} passages from {args.file} ...")
+    if not args.json:
+        print(f"ingesting {len(batch)} passages from {args.file} ...")
     written = compiler.compile_batch(batch)
     compiler.finalize()
-    print(f"done: {len(written)} page updates written; wiki has "
-          f"{len(store.iter_pages())} pages, {len(book.open_entries())} open error entries")
-    if compiler.skipped:
-        print(f"WARNING: {len(compiler.skipped)} passage(s) skipped due to failures:")
-        for sid, reason in compiler.skipped:
-            print(f"  - {sid}: {reason}")
+    report = {
+        "source": args.file,
+        "passages": len(batch),
+        "written": written,
+        "pages": len(store.iter_pages()),
+        "openErrorEntries": len(book.open_entries()),
+        "skipped": [{"id": sid, "reason": reason} for sid, reason in compiler.skipped],
+    }
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False))
+    else:
+        print(f"done: {len(written)} page updates written; wiki has "
+              f"{report['pages']} pages, {report['openErrorEntries']} open error entries")
+        if compiler.skipped:
+            print(f"WARNING: {len(compiler.skipped)} passage(s) skipped due to failures:")
+            for sid, reason in compiler.skipped:
+                print(f"  - {sid}: {reason}")
     return 0
 
 
@@ -70,6 +91,13 @@ def cmd_query(args) -> int:
 def cmd_validate(args) -> int:
     store, _book, _llm = _components(args)
     errors = validators.structural_validate(store)
+    if args.json:
+        print(json.dumps(
+            {"ok": not errors,
+             "errors": [{"type": e.type, "page": e.page, "detail": e.detail}
+                        for e in errors]},
+            ensure_ascii=False))
+        return 0 if not errors else 1
     if not errors:
         print("OK: no structural errors")
         return 0
@@ -92,11 +120,66 @@ def cmd_fix(args) -> int:
 
 def cmd_errorbook(args) -> int:
     _store, book, _llm = _components(args)
+    if args.json:
+        print(json.dumps({"entries": book.entries}, ensure_ascii=False, default=str))
+        return 0
     for e in book.entries:
         print(f"#{e['id']} [{e['status']}] {e['type']} on {e['page']} "
               f"(x{e.get('occurrences', 1)})\n    rule: {e.get('constraint_rule', '-')}")
     if not book.entries:
         print("(error book is empty)")
+    return 0
+
+
+def cmd_search(args) -> int:
+    """Search pages with the structured-signal scorer (paper §3.2)."""
+    store, _book, _llm = _components(args)
+    from . import search as search_mod
+    results = search_mod.search(store, args.query, limit=args.limit)
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False))
+    else:
+        for r in results:
+            aliases = f"  ({', '.join(r['aliases'])})" if r["aliases"] else ""
+            print(f"{r['score']:>3}  {r['path']}{aliases}")
+            if r["summary"]:
+                print(f"      {r['summary']}")
+    return 0
+
+
+def cmd_read(args) -> int:
+    """Batch-read pages (wiki_read primitive)."""
+    store, _book, _llm = _components(args)
+    contents = store.read_many(args.paths)
+    if args.json:
+        print(json.dumps(contents, ensure_ascii=False))
+    else:
+        for p, c in contents.items():
+            print(f"===== {p} =====\n{c}")
+    return 0
+
+
+def cmd_stats(args) -> int:
+    """Wiki statistics: page counts per category, digests, error book size."""
+    store, book, _llm = _components(args)
+    pages = store.iter_pages()
+    categories: dict[str, int] = {}
+    for p in pages:
+        cat = p.split("/")[0]
+        categories[cat] = categories.get(cat, 0) + 1
+    stats = {
+        "pages": len(pages),
+        "categories": categories,
+        "digests": len(store.iter_digests()),
+        "errorBookEntries": len(book.entries),
+    }
+    if args.json:
+        print(json.dumps(stats, ensure_ascii=False))
+    else:
+        print(f"pages: {stats['pages']}  digests: {stats['digests']}  "
+              f"error-book: {stats['errorBookEntries']}")
+        for cat, n in sorted(categories.items()):
+            print(f"  {cat}: {n}")
     return 0
 
 
@@ -113,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("ingest", help="compile a source file into the wiki")
     p.add_argument("file")
+    p.add_argument("--json", action="store_true", help="print a JSON report to stdout")
     p.set_defaults(fn=cmd_ingest)
 
     p = sub.add_parser("query", help="answer a question via traversal")
@@ -120,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_query)
 
     p = sub.add_parser("validate", help="run structural validation")
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
     p.set_defaults(fn=cmd_validate)
 
     p = sub.add_parser("fix", help="code autofix; --finalize adds LLM repair rounds")
@@ -127,7 +212,23 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_fix)
 
     p = sub.add_parser("errorbook", help="show error book entries")
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
     p.set_defaults(fn=cmd_errorbook)
+
+    p = sub.add_parser("search", help="search pages (structured-signal scoring)")
+    p.add_argument("query")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
+    p.set_defaults(fn=cmd_search)
+
+    p = sub.add_parser("read", help="batch-read pages")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
+    p.set_defaults(fn=cmd_read)
+
+    p = sub.add_parser("stats", help="wiki statistics")
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
+    p.set_defaults(fn=cmd_stats)
 
     args = ap.parse_args(argv)
     return args.fn(args)
