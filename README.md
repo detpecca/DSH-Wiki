@@ -89,7 +89,8 @@ python examples/demo_paper.py
 把源文本文件编译进 Wiki。完整执行论文算法 1：逐段落 SelectPages（LLM 选目标页，
 上限 k=5）→ 编译（注入 Error Book 约束）→ 结构/内容校验 → 错误归因 → 代码自动修复
 → 应用更新（写 digest/页面/回链/重建索引）→ 每 10 篇 LLM 周期修复 → `finalize()`
-定稿。**恒以 exit 0 结束**，跳过/失败体现在 `skipped` 中。
+定稿。编译循环内**恒以 exit 0 结束**，单条段落的跳过/失败体现在 `skipped` 中
+（例外：源文件路径不存在时 `read_text` 在循环前抛异常，以非 0 退出）。
 
 `--json` 输出：
 
@@ -163,7 +164,8 @@ digest（`sources/digests/s-001`）。`--json` 输出 `{path: content}` 对象�
 `--json` 输出：
 
 ```json
-{"codeFixes": ["rebuilt index: concepts/_index"], "finalized": true,
+{"codeFixes": ["entities/paper <- concepts/retrieval", "rebuilt indices"],
+ "finalized": true,
  "repaired": ["concepts/retrieval"], "closedErrorEntries": 2, "openErrorEntries": 0}
 ```
 
