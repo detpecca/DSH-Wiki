@@ -38,7 +38,7 @@ python -m llm_wiki --wiki ./wiki search "导演" --json
 python -m llm_wiki --wiki ./wiki read concepts/X entities/Y --json
 python -m llm_wiki --wiki ./wiki stats --json
 
-# 结构校验（5 类确定性错误检测；--json 输出结构化错误列表）
+# 结构校验（4 类确定性错误检测；--json 输出结构化错误列表；unseen_overwrite 为编译期检查，仅在 ingest 内触发）
 python -m llm_wiki --wiki ./wiki validate [--json]
 
 # 代码自动修复；--finalize 追加 3 轮 代码↔LLM 修复（论文 §3.3 定稿阶段）
