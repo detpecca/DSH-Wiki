@@ -2,16 +2,16 @@
 validate / fix / errorbook.
 
 Examples:
-    python -m llm_wiki ingest notes.txt --wiki ./wiki
-    python -m llm_wiki query "Which film has the older director?" --wiki ./wiki
-    python -m llm_wiki search "director" --wiki ./wiki --json
-    python -m llm_wiki read entities/X concepts/Y --wiki ./wiki --json
-    python -m llm_wiki stats --wiki ./wiki --json
-    python -m llm_wiki validate --wiki ./wiki
-    python -m llm_wiki fix --wiki ./wiki            # code autofix + finalize
-    python -m llm_wiki errorbook --wiki ./wiki
+    python -m llm_wiki --wiki ./wiki ingest notes.txt
+    python -m llm_wiki --wiki ./wiki query "Which film has the older director?"
+    python -m llm_wiki --wiki ./wiki search "director" --json
+    python -m llm_wiki --wiki ./wiki read entities/X concepts/Y --json
+    python -m llm_wiki --wiki ./wiki stats --json
+    python -m llm_wiki --wiki ./wiki validate
+    python -m llm_wiki --wiki ./wiki fix            # code autofix (--finalize: +LLM repair)
+    python -m llm_wiki --wiki ./wiki errorbook
 
-Every read-only subcommand (search / read / stats / validate / errorbook)
+Every subcommand (search / read / stats / validate / fix / errorbook)
 plus ingest accepts ``--json`` for machine-consumable output; the DSH plugin
 adapter drives the wiki through these JSON lines.
 """
@@ -111,10 +111,27 @@ def cmd_fix(args) -> int:
     store, book, llm = _components(args)
     compiler = Compiler(store, llm, book)
     fixes = compiler.code_fix_wiki()
-    print(f"code fixes: {fixes or 'none needed'}")
+    repaired: list[str] = []
+    closed: list[dict] = []
     if args.finalize:
-        compiler.finalize()
-        print("finalization complete (3 rounds code-fix <-> LLM-fix)")
+        result = compiler.finalize()
+        repaired = result["repaired"]
+        closed = result["closedEntries"]
+    report = {
+        "codeFixes": fixes,
+        "finalized": args.finalize,
+        "repaired": repaired,
+        "closedErrorEntries": len(closed),
+        "openErrorEntries": len(book.open_entries()),
+    }
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, default=str))
+    else:
+        print(f"code fixes: {fixes or 'none needed'}")
+        if args.finalize:
+            print(f"finalization complete: {len(repaired)} page(s) repaired, "
+                  f"{len(closed)} error entry(ies) closed")
+            print(f"open error entries: {report['openErrorEntries']}")
     return 0
 
 
@@ -209,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("fix", help="code autofix; --finalize adds LLM repair rounds")
     p.add_argument("--finalize", action="store_true")
+    p.add_argument("--json", action="store_true", help="print JSON to stdout")
     p.set_defaults(fn=cmd_fix)
 
     p = sub.add_parser("errorbook", help="show error book entries")

@@ -62,7 +62,7 @@ def _run(argv: list[str]) -> str:
 
 
 def test_search_json(wiki: Path):
-    out, code = _run(["search", "retrieval", "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "search", "retrieval", "--json"])
     assert code == 0
     data = json.loads(out)
     assert isinstance(data, list) and data
@@ -72,8 +72,8 @@ def test_search_json(wiki: Path):
 
 
 def test_read_json(wiki: Path):
-    out, code = _run(["read", "concepts/retrieval", "entities/paper", "missing/page",
-                      "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "read",
+                      "concepts/retrieval", "entities/paper", "missing/page", "--json"])
     assert code == 0
     data = json.loads(out)
     assert isinstance(data, dict)
@@ -83,7 +83,7 @@ def test_read_json(wiki: Path):
 
 
 def test_stats_json(wiki: Path):
-    out, code = _run(["stats", "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "stats", "--json"])
     assert code == 0
     data = json.loads(out)
     assert data["pages"] == 2
@@ -93,7 +93,7 @@ def test_stats_json(wiki: Path):
 
 
 def test_validate_json_ok(wiki: Path):
-    out, code = _run(["validate", "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "validate", "--json"])
     assert code == 0
     data = json.loads(out)
     assert data["ok"] is True
@@ -103,7 +103,7 @@ def test_validate_json_ok(wiki: Path):
 def test_validate_json_errors(wiki: Path):
     (wiki / "wiki" / "concepts" / "broken.md").write_text(
         "# Broken\n\nNo required sections here.\n", encoding="utf-8")
-    out, code = _run(["validate", "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "validate", "--json"])
     assert code == 1
     data = json.loads(out)
     assert data["ok"] is False
@@ -112,7 +112,20 @@ def test_validate_json_errors(wiki: Path):
 
 
 def test_errorbook_json(wiki: Path):
-    out, code = _run(["errorbook", "--wiki", str(wiki / "wiki"), "--json"])
+    out, code = _run(["--wiki", str(wiki / "wiki"), "errorbook", "--json"])
     assert code == 0
     data = json.loads(out)
     assert data == {"entries": []}
+
+
+def test_fix_json(wiki: Path):
+    out, code = _run(["--wiki", str(wiki / "wiki"), "fix", "--json"])
+    assert code == 0
+    data = json.loads(out)
+    assert set(data) == {"codeFixes", "finalized", "repaired",
+                         "closedErrorEntries", "openErrorEntries"}
+    assert data["finalized"] is False
+    assert data["codeFixes"] == []
+    assert data["repaired"] == []
+    assert data["closedErrorEntries"] == 0
+    assert data["openErrorEntries"] == 0
