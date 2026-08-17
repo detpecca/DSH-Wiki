@@ -1,5 +1,22 @@
 # DSH-Wiki（LLM-Wiki 引擎）
 
+> ## ⚠️ 已废弃（DEPRECATED）
+>
+> 本仓库是 [LLM-Wiki](https://github.com/detpecca/LLM-Wiki) 的一个 fork，其独有的
+> `--json` CLI 层（`search` / `read` / `stats` 子命令）已并回主仓库，主仓库同时
+> 拥有本仓库所缺的功能（文档删除 `delete`、native tool calling、store 元数据缓存）。
+>
+> **请改用 [LLM-Wiki](https://github.com/detpecca/LLM-Wiki)：**
+>
+> ```bash
+> pip install git+https://github.com/detpecca/LLM-Wiki.git
+> ```
+>
+> DSH 插件 [dsh-llm-wiki](https://github.com/detpecca/dsh-llm-wiki) 已切换为直接驱动
+> LLM-Wiki。本仓库保留仅为历史存档，不再维护。
+
+---
+
 对论文 **《Retrieval as Reasoning: Self-Evolving Agent-Native Retrieval via LLM-Wiki》**（arXiv:2605.25480）的独立实现：把文档**编译**成带双向链接的结构化 Wiki，查询时由 Agent 组合 `wiki_search` / `wiki_read` 进行遍历推理，并通过 **Error Book** 实现持久的自我纠错。
 
 本仓库是**纯 Python 引擎 + CLI**。它有两种用法：
